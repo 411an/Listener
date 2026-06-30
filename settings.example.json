@@ -1,0 +1,15 @@
+{
+  "model_size": "base",
+  "models_dir": "models",
+  "language": "ru",
+  "ui_language": "ru",
+  "use_gpu": true,
+  "delete_recordings_after_transcribe": true,
+  "vad_filter": true,
+  "min_silence_duration_ms": 700,
+  "beam_size": 1,
+  "condition_on_previous_text": true,
+  "word_timestamps": false,
+  "device": "cpu",
+  "compute_type": "int8"
+}
