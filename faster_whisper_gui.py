@@ -91,6 +91,7 @@ BUILTIN_TRANSLATIONS: dict[str, str] = {
     "label_language": "Language",
     "label_interface": "Interface",
     "label_min_silence": "Silence, ms",
+    "label_beam_size": "Beam size",
     "label_models_dir": "Models folder",
     "option_use_gpu": "Use GPU (CUDA)",
     "option_delete_recordings": "Delete recordings after transcription",
@@ -407,6 +408,11 @@ class ListenerApp(tk.Tk):
         self.min_silence_var = tk.IntVar(
             value=int(self.settings["min_silence_duration_ms"])
         )
+        try:
+            beam_size_value = int(self.settings.get("beam_size", 1))
+        except (TypeError, ValueError):
+            beam_size_value = 1
+        self.beam_size_var = tk.IntVar(value=max(1, min(10, beam_size_value)))
         self.status_var = tk.StringVar(value=self.t("status_ready"))
         self.model_status_var = tk.StringVar(value="")
         self.gpu_status_var = tk.StringVar(value=self.gpu_status_text())
@@ -571,6 +577,23 @@ class ListenerApp(tk.Tk):
         )
         self.ui_language_combo.bind("<<ComboboxSelected>>", self._on_ui_language_changed)
 
+        self._label(options_frame, "label_beam_size").grid(
+            row=3, column=0, padx=(10, 6), pady=(0, 6), sticky="w"
+        )
+        self.beam_size_spin = ttk.Spinbox(
+            options_frame,
+            from_=1,
+            to=10,
+            increment=1,
+            textvariable=self.beam_size_var,
+            width=8,
+            command=self._on_option_changed,
+        )
+        self.beam_size_spin.grid(
+            row=3, column=1, padx=(0, 10), pady=(0, 6), sticky="w"
+        )
+        self.beam_size_spin.bind("<FocusOut>", self._on_option_changed)
+
         self.use_gpu_check = ttk.Checkbutton(
             options_frame,
             variable=self.use_gpu_var,
@@ -578,11 +601,11 @@ class ListenerApp(tk.Tk):
         )
         self._localize(self.use_gpu_check, "option_use_gpu")
         self.use_gpu_check.grid(
-            row=3, column=0, columnspan=4, padx=10, pady=(8, 2), sticky="w"
+            row=4, column=0, columnspan=4, padx=10, pady=(8, 2), sticky="w"
         )
 
         ttk.Label(options_frame, textvariable=self.gpu_status_var, anchor="w").grid(
-            row=4, column=0, columnspan=4, padx=10, pady=(0, 10), sticky="ew"
+            row=5, column=0, columnspan=4, padx=10, pady=(0, 10), sticky="ew"
         )
 
         self.save_options_button = self._button(
@@ -795,6 +818,7 @@ class ListenerApp(tk.Tk):
                 ),
                 "vad_filter": bool(self.vad_var.get()),
                 "min_silence_duration_ms": self._safe_min_silence(),
+                "beam_size": self._safe_beam_size(),
                 "device": device,
                 "compute_type": compute_type,
             }
@@ -808,6 +832,13 @@ class ListenerApp(tk.Tk):
         except (tk.TclError, ValueError):
             value = 700
         return max(100, min(3000, value))
+
+    def _safe_beam_size(self) -> int:
+        try:
+            value = int(self.beam_size_var.get())
+        except (tk.TclError, ValueError):
+            value = 1
+        return max(1, min(10, value))
 
     def selected_model_path(self) -> Path:
         models_dir = Path(self.models_dir_var.get().strip() or DEFAULT_MODELS_DIR)
@@ -894,6 +925,7 @@ class ListenerApp(tk.Tk):
         )
         self.vad_check.configure(state="disabled" if busy else "normal")
         self.min_silence_spin.configure(state="disabled" if busy else "normal")
+        self.beam_size_spin.configure(state="disabled" if busy else "normal")
         self.delete_recordings_check.configure(state="disabled" if busy else "normal")
         self._apply_dynamic_texts()
 

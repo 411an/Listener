@@ -11,6 +11,7 @@ The app is intentionally plain: choose a model, record audio, stop recording, an
 - Transcription with `base`, `small`, `medium`, or `large-v3`.
 - Russian, English, or automatic transcription language detection.
 - Optional VAD, enabled by default with `min_silence_duration_ms=700`.
+- Configurable `beam_size` for quality/speed experiments.
 - Transcript text is appended instead of replacing previous text.
 - No fake transcription progress bar: text appears when `faster-whisper` returns completed segments.
 - Model folder selection, model check, and model download from Hugging Face.
@@ -120,6 +121,8 @@ vad_parameters={"min_silence_duration_ms": 700}
 
 VAD can be disabled in the app. The transcription language can be selected from the list or typed manually; `auto` enables language detection.
 
+`beam_size` is configurable in the options block. The default is `1` for speed; higher values can improve some difficult recordings but are slower, especially on CPU.
+
 `faster-whisper` returns completed segments, not live partial tokens or a GUI progress callback. The app appends those completed segments to the transcript box.
 
 ---
@@ -137,6 +140,7 @@ VAD can be disabled in the app. The transcription language can be selected from 
 - Распознавание через `base`, `small`, `medium` или `large-v3`.
 - Русский, английский или автоматическое определение языка распознавания.
 - Опциональный VAD, по умолчанию включен с `min_silence_duration_ms=700`.
+- Настраиваемый `beam_size` для проб качества/скорости.
 - Расшифровка дописывается в текстовое окно, а не заменяет предыдущий текст.
 - Без фальшивого прогрессбара расшифровки: текст появляется, когда `faster-whisper` возвращает готовые сегменты.
 - Выбор папки моделей, проверка модели и скачивание модели с Hugging Face.
@@ -245,5 +249,7 @@ vad_parameters={"min_silence_duration_ms": 700}
 ```
 
 VAD можно выключить в приложении. Язык распознавания можно выбрать из списка или вписать вручную; `auto` включает автоопределение.
+
+`beam_size` настраивается в блоке опций. По умолчанию стоит `1` для скорости; большие значения могут улучшить часть сложных записей, но работают медленнее, особенно на CPU.
 
 `faster-whisper` возвращает готовые сегменты, а не живые частичные токены или GUI-callback прогресса. Приложение дописывает эти готовые сегменты в текстовое окно.

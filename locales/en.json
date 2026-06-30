@@ -8,6 +8,7 @@
   "label_language": "Language",
   "label_interface": "Interface",
   "label_min_silence": "Silence, ms",
+  "label_beam_size": "Beam size",
   "label_models_dir": "Models folder",
   "option_use_gpu": "Use GPU (CUDA)",
   "option_delete_recordings": "Delete recordings after transcription",

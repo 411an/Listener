@@ -8,6 +8,7 @@
   "label_language": "Язык",
   "label_interface": "Интерфейс",
   "label_min_silence": "Тишина, мс",
+  "label_beam_size": "Beam size",
   "label_models_dir": "Папка моделей",
   "option_use_gpu": "Использовать GPU (CUDA)",
   "option_delete_recordings": "Удалять записи сразу после расшифровки",
