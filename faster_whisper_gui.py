@@ -25,6 +25,7 @@ DEFAULT_MODELS_DIR = APP_DIR / "models"
 
 SAMPLE_RATE = 16_000
 CHANNELS = 1
+LONG_AUDIO_CHUNK_SECONDS = 25
 
 MODEL_CHOICES = ("base", "small", "medium", "large-v3")
 MODEL_REPO_IDS = {
@@ -129,6 +130,14 @@ BUILTIN_TRANSLATIONS: dict[str, str] = {
         "Downloading {model_size}: {percent:.0f}% ({downloaded} / {total})"
     ),
     "status_loading_model": "Transcribing...",
+    "status_loading_chunk": "Transcribing chunk {current}/{total}...",
+    "status_transcribing_elapsed": "Transcribing... {elapsed}",
+    "status_transcribing_chunk_elapsed": (
+        "Transcribing chunk {current}/{total}... {elapsed}"
+    ),
+    "status_transcribe_done_parts": (
+        "Recognized {completed} of {total} parts in {elapsed}"
+    ),
     "status_model_downloaded": "Model downloaded",
     "status_model_already_downloaded": "Model {model_size} is already downloaded",
     "status_model_missing": "Model is not found",
@@ -385,6 +394,12 @@ class ListenerApp(tk.Tk):
         self.recording_stream: Any | None = None
         self.recording_started_at: float | None = None
         self.recording_job: str | None = None
+        self.transcribe_started_at: float | None = None
+        self.transcribe_timer_job: str | None = None
+        self.transcribe_status_key = "status_loading_model"
+        self.transcribe_status_kwargs: dict[str, Any] = {}
+        self.transcribe_parts_completed = 0
+        self.transcribe_parts_total = 1
         self.audio_levels: list[float] = [0.0] * 56
         self.last_audio_level_sent = 0.0
         self.transcript_append_started = False
@@ -771,6 +786,7 @@ class ListenerApp(tk.Tk):
 
     def _on_option_changed(self, _event: object | None = None) -> None:
         self.save_current_options()
+        self._refresh_action_states()
         self.check_model_status(show_message=False)
 
     def _on_use_gpu_changed(self) -> None:
@@ -924,7 +940,9 @@ class ListenerApp(tk.Tk):
             else "disabled"
         )
         self.vad_check.configure(state="disabled" if busy else "normal")
-        self.min_silence_spin.configure(state="disabled" if busy else "normal")
+        self.min_silence_spin.configure(
+            state="normal" if not busy and self.vad_var.get() else "disabled"
+        )
         self.beam_size_spin.configure(state="disabled" if busy else "normal")
         self.delete_recordings_check.configure(state="disabled" if busy else "normal")
         self._apply_dynamic_texts()
@@ -1091,6 +1109,56 @@ class ListenerApp(tk.Tk):
         minutes, seconds = divmod(elapsed, 60)
         self.timer_var.set(f"{minutes:02d}:{seconds:02d}")
         self.recording_job = self.after(250, self._update_recording_timer)
+
+    def _format_elapsed(self, elapsed: float) -> str:
+        total_seconds = max(0, int(round(elapsed)))
+        minutes, seconds = divmod(total_seconds, 60)
+        return f"{minutes:02d}:{seconds:02d}"
+
+    def _start_transcribe_timer(self, total_parts: int = 1) -> None:
+        if self.transcribe_timer_job is not None:
+            self.after_cancel(self.transcribe_timer_job)
+            self.transcribe_timer_job = None
+        self.transcribe_started_at = time.monotonic()
+        self.transcribe_status_key = "status_loading_model"
+        self.transcribe_status_kwargs = {}
+        self.transcribe_parts_completed = 0
+        self.transcribe_parts_total = max(1, total_parts)
+        self._update_transcribe_timer()
+
+    def _stop_transcribe_timer(self) -> float:
+        elapsed = 0.0
+        if self.transcribe_started_at is not None:
+            elapsed = time.monotonic() - self.transcribe_started_at
+        if self.transcribe_timer_job is not None:
+            self.after_cancel(self.transcribe_timer_job)
+            self.transcribe_timer_job = None
+        self.transcribe_started_at = None
+        return elapsed
+
+    def _set_transcribe_status_template(self, key: str, **kwargs: Any) -> None:
+        self.transcribe_status_key = key
+        self.transcribe_status_kwargs = dict(kwargs)
+        self._update_transcribe_status()
+
+    def _update_transcribe_status(self) -> None:
+        if self.transcribe_started_at is None:
+            return
+        elapsed = self._format_elapsed(time.monotonic() - self.transcribe_started_at)
+        key = self.transcribe_status_key
+        kwargs = dict(self.transcribe_status_kwargs)
+        if key == "status_loading_chunk":
+            key = "status_transcribing_chunk_elapsed"
+        elif key == "status_loading_model":
+            key = "status_transcribing_elapsed"
+        kwargs["elapsed"] = elapsed
+        self.status_var.set(self.t(key, **kwargs))
+
+    def _update_transcribe_timer(self) -> None:
+        if self.transcribe_started_at is None:
+            return
+        self._update_transcribe_status()
+        self.transcribe_timer_job = self.after(250, self._update_transcribe_timer)
 
     def stop_recording_and_transcribe(self) -> None:
         if self.recording_stream is None:
@@ -1377,11 +1445,12 @@ class ListenerApp(tk.Tk):
         self.progress_text_var.set("")
         self.progress.stop()
         self.progress.configure(mode="determinate")
-        self.status_var.set(self.t("status_loading_model"))
+        self._start_transcribe_timer(total_parts=1)
         device, compute_type = self.selected_runtime()
 
         options = {
             "model_path": str(status.path),
+            "model_size": self.model_var.get().strip() or "base",
             "audio_path": str(audio_path),
             "language": self._language_for_transcribe(),
             "vad_filter": bool(self.vad_var.get()),
@@ -1415,6 +1484,7 @@ class ListenerApp(tk.Tk):
         translations = options["translations"]
         try:
             from faster_whisper import WhisperModel
+            from faster_whisper.audio import decode_audio
 
             model_key = (
                 options["model_path"],
@@ -1444,46 +1514,94 @@ class ListenerApp(tk.Tk):
                     "min_silence_duration_ms": options["min_silence_duration_ms"],
                 }
 
-            segments, info = self.loaded_model.transcribe(
-                options["audio_path"],
-                **kwargs,
-            )
-            language = getattr(info, "language", None) or "unknown"
-            probability = getattr(info, "language_probability", None)
-            if probability is not None:
-                self.events.put(
-                    (
-                        "status",
-                        self._format_with(
-                            translations,
-                            "status_recognition_language_probability",
-                            language=language,
-                            probability=probability,
-                        ),
+            sampling_rate = self.loaded_model.feature_extractor.sampling_rate
+            audio_duration = 0.0
+            try:
+                with wave.open(str(options["audio_path"]), "rb") as audio_file:
+                    audio_duration = audio_file.getnframes() / float(
+                        audio_file.getframerate()
                     )
-                )
+            except (OSError, wave.Error, ZeroDivisionError):
+                audio_duration = 0.0
+
+            use_chunk_workaround = audio_duration > LONG_AUDIO_CHUNK_SECONDS
+            total_parts = 1
+
+            def emit_info(info: Any) -> None:
+                language = getattr(info, "language", None) or "unknown"
+                probability = getattr(info, "language_probability", None)
+                if probability is not None:
+                    self.events.put(
+                        (
+                            "status",
+                            self._format_with(
+                                translations,
+                                "status_recognition_language_probability",
+                                language=language,
+                                probability=probability,
+                            ),
+                        )
+                    )
+                else:
+                    self.events.put(
+                        (
+                            "status",
+                            self._format_with(
+                                translations,
+                                "status_recognition_language",
+                                language=language,
+                            ),
+                        )
+                    )
+
+            def emit_segments(segments: Any) -> None:
+                for segment in segments:
+                    text = segment.text.strip()
+                    if text:
+                        self.events.put(("append_text", text))
+
+            if use_chunk_workaround:
+                audio = decode_audio(options["audio_path"], sampling_rate=sampling_rate)
+                chunk_samples = int(LONG_AUDIO_CHUNK_SECONDS * sampling_rate)
+                total_chunks = max(1, (len(audio) + chunk_samples - 1) // chunk_samples)
+                total_parts = total_chunks
+                self.events.put(("transcribe_parts_total", total_parts))
+                for index in range(total_chunks):
+                    start = index * chunk_samples
+                    end = min(len(audio), start + chunk_samples)
+                    if end <= start:
+                        continue
+                    self.events.put(
+                        (
+                            "transcribe_part_started",
+                            {"current": index + 1, "total": total_chunks},
+                        )
+                    )
+                    segments, info = self.loaded_model.transcribe(
+                        audio[start:end],
+                        **kwargs,
+                    )
+                    if index == 0:
+                        emit_info(info)
+                    emit_segments(segments)
+                    self.events.put(("transcribe_part_done", index + 1))
             else:
-                self.events.put(
-                    (
-                        "status",
-                        self._format_with(
-                            translations,
-                            "status_recognition_language",
-                            language=language,
-                        ),
-                    )
+                self.events.put(("transcribe_parts_total", 1))
+                self.events.put(("transcribe_part_started", {"current": 1, "total": 1}))
+                segments, info = self.loaded_model.transcribe(
+                    options["audio_path"],
+                    **kwargs,
                 )
-            for segment in segments:
-                text = segment.text.strip()
-                if text:
-                    self.events.put(("append_text", text))
+                emit_info(info)
+                emit_segments(segments)
+                self.events.put(("transcribe_part_done", 1))
 
             if options.get("delete_after_transcribe"):
                 try:
                     Path(options["audio_path"]).unlink(missing_ok=True)
                 except OSError:
                     pass
-            self.events.put(("transcribe_done", None))
+            self.events.put(("transcribe_done", {"completed": total_parts, "total": total_parts}))
         except ImportError:
             self.events.put(
                 (
@@ -1517,6 +1635,23 @@ class ListenerApp(tk.Tk):
                     self._append_audio_level(float(payload))
             elif kind == "append_text":
                 self._append_transcript_segment(str(payload))
+            elif kind == "transcribe_parts_total":
+                self.transcribe_parts_total = max(1, int(payload))
+            elif kind == "transcribe_part_started":
+                data = dict(payload)
+                current = int(data.get("current", 1))
+                total = int(data.get("total", self.transcribe_parts_total))
+                self.transcribe_parts_total = max(1, total)
+                self._set_transcribe_status_template(
+                    "status_loading_chunk",
+                    current=current,
+                    total=total,
+                )
+            elif kind == "transcribe_part_done":
+                self.transcribe_parts_completed = max(
+                    self.transcribe_parts_completed,
+                    int(payload),
+                )
             elif kind == "download_done":
                 self.model_status_var.set(payload.message)
                 self._set_model_available(payload.exists)
@@ -1537,13 +1672,30 @@ class ListenerApp(tk.Tk):
                     self.status_var.set(self.t("status_model_missing"))
                 self.set_busy(False)
             elif kind == "transcribe_done":
+                elapsed = self._stop_transcribe_timer()
+                if isinstance(payload, dict):
+                    completed = int(
+                        payload.get("completed", self.transcribe_parts_completed)
+                    )
+                    total = int(payload.get("total", self.transcribe_parts_total))
+                else:
+                    completed = self.transcribe_parts_completed
+                    total = self.transcribe_parts_total
                 self.progress.stop()
                 self.progress.configure(mode="determinate")
                 self.progress_var.set(0)
                 self.progress_text_var.set("")
-                self.status_var.set(self.t("status_ready"))
+                self.status_var.set(
+                    self.t(
+                        "status_transcribe_done_parts",
+                        completed=max(1, completed),
+                        total=max(1, total),
+                        elapsed=self._format_elapsed(elapsed),
+                    )
+                )
                 self.set_busy(False)
             elif kind == "error":
+                self._stop_transcribe_timer()
                 self.progress.stop()
                 self.progress.configure(mode="determinate")
                 self.progress_var.set(0)

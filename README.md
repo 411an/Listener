@@ -14,6 +14,7 @@ The app is intentionally plain: choose a model, record audio, stop recording, an
 - Configurable `beam_size` for quality/speed experiments.
 - Transcript text is appended instead of replacing previous text.
 - No fake transcription progress bar: text appears when `faster-whisper` returns completed segments.
+- Transcription timer and final part count, including chunked long recordings.
 - Model folder selection, model check, and model download from Hugging Face.
 - Download progress with percent, target path, `.part` files, resume, and skip for already complete files.
 - Model details: approximate parameters, disk size, `model.bin` size, repo, runtime, and local path.
@@ -123,6 +124,10 @@ VAD can be disabled in the app. The transcription language can be selected from 
 
 `beam_size` is configurable in the options block. The default is `1` for speed; higher values can improve some difficult recordings but are slower, especially on CPU.
 
+Recordings longer than 25 seconds are transcribed in 25-second chunks. This avoids cases where the model/runtime effectively stops at the first 30-second Whisper window.
+
+During transcription, the status line shows elapsed time. At the end, it reports how many parts were recognized and the total elapsed time.
+
 `faster-whisper` returns completed segments, not live partial tokens or a GUI progress callback. The app appends those completed segments to the transcript box.
 
 ---
@@ -143,6 +148,7 @@ VAD can be disabled in the app. The transcription language can be selected from 
 - Настраиваемый `beam_size` для проб качества/скорости.
 - Расшифровка дописывается в текстовое окно, а не заменяет предыдущий текст.
 - Без фальшивого прогрессбара расшифровки: текст появляется, когда `faster-whisper` возвращает готовые сегменты.
+- Таймер расшифровки и итоговое число частей, включая длинные записи, разбитые на фрагменты.
 - Выбор папки моделей, проверка модели и скачивание модели с Hugging Face.
 - Прогресс скачивания с процентом, путем назначения, `.part` файлами, докачкой и пропуском уже полных файлов.
 - Информация о модели: примерное число параметров, размер на диске, размер `model.bin`, repo, runtime и локальный путь.
@@ -251,5 +257,9 @@ vad_parameters={"min_silence_duration_ms": 700}
 VAD можно выключить в приложении. Язык распознавания можно выбрать из списка или вписать вручную; `auto` включает автоопределение.
 
 `beam_size` настраивается в блоке опций. По умолчанию стоит `1` для скорости; большие значения могут улучшить часть сложных записей, но работают медленнее, особенно на CPU.
+
+Записи длиннее 25 секунд расшифровываются кусками по 25 секунд. Это обход для случаев, когда модель/runtime фактически останавливается на первом 30-секундном окне Whisper.
+
+Во время расшифровки строка состояния показывает прошедшее время. В конце она сообщает, сколько частей было распознано и за сколько времени.
 
 `faster-whisper` возвращает готовые сегменты, а не живые частичные токены или GUI-callback прогресса. Приложение дописывает эти готовые сегменты в текстовое окно.
